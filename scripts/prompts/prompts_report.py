@@ -69,7 +69,7 @@ Now begin your research and write the article about:
 """
 
 
-def get_search_plan_instruction(query):
+def get_search_plan_instruction(query: str) -> str:
     return f"""Please help me create a detailed plan to search over the web for solving the following question:
 {query}
 
@@ -132,7 +132,7 @@ Now please analyze the web pages and provide all relevant information for the se
 def get_click_web_page_reader_instruction(click_intent, document):
     return f"""Please provide all content related to the following click intent from this document in markdown format.
 
-Click Intent: 
+Click Intent:
 {click_intent}
 
 Searched Web Page:

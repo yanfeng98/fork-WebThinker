@@ -1,25 +1,18 @@
-# run_web_thinker.py
 import os
+import re
 import json
 import time
-import re
-from tqdm import tqdm
-import numpy as np
-import torch
-import string
-from typing import Optional, Tuple, List, Dict, Set
-import argparse
 import random
 import asyncio
 import aiohttp
-import signal
-
+import argparse
+import numpy as np
+from tqdm import tqdm
 from openai import AsyncOpenAI
+from typing import Coroutine, Any
 
 from search.bing_search import (
-    bing_web_search, 
-    extract_relevant_info, 
-    fetch_page_content, 
+    extract_relevant_info,
     fetch_page_content_async,
     extract_snippet_with_context,
     bing_web_search_async,
@@ -27,11 +20,10 @@ from search.bing_search import (
     extract_relevant_info_serper
 )
 from evaluate.evaluate import (
-    run_evaluation, 
+    run_evaluation,
     extract_answer_fn
 )
 from prompts.prompts import (
-    get_web_page_reader_instruction,
     get_detailed_web_page_reader_instruction,
 )
 from prompts.prompts_report import (
@@ -40,8 +32,7 @@ from prompts.prompts_report import (
     get_report_webthinker_instruction,
     get_search_plan_instruction,
     get_deep_web_explorer_instruction,
-    get_write_section_instruction, 
-    get_section_summary_instruction,
+    get_write_section_instruction,
     get_edit_article_instruction,
     get_title_instruction,
     get_click_web_page_reader_instruction,
@@ -49,32 +40,31 @@ from prompts.prompts_report import (
 )
 
 from rank_bm25 import BM25Okapi
-import nltk
 from nltk.tokenize import word_tokenize
 # nltk.download('punkt')
 from transformers import AutoTokenizer
 
 
 # Define special tokens
-BEGIN_SEARCH_QUERY = "<|begin_search_query|>"
-END_SEARCH_QUERY = "<|end_search_query|>"
-BEGIN_SEARCH_RESULT = "<|begin_search_result|>"
-END_SEARCH_RESULT = "<|end_search_result|>"
+BEGIN_SEARCH_QUERY: str = "<|begin_search_query|>"
+END_SEARCH_QUERY: str = "<|end_search_query|>"
+BEGIN_SEARCH_RESULT: str = "<|begin_search_result|>"
+END_SEARCH_RESULT: str = "<|end_search_result|>"
 
-BEGIN_CLICK_LINK = "<|begin_click_link|>"
-END_CLICK_LINK = "<|end_click_link|>"
-BEGIN_CLICK_RESULT = "<|begin_click_result|>"
-END_CLICK_RESULT = "<|end_click_result|>"
+BEGIN_CLICK_LINK: str = "<|begin_click_link|>"
+END_CLICK_LINK: str = "<|end_click_link|>"
+BEGIN_CLICK_RESULT: str = "<|begin_click_result|>"
+END_CLICK_RESULT: str = "<|end_click_result|>"
 
-BEGIN_WRITE_SECTION = "<|begin_write_section|>"
-END_WRITE_SECTION = "<|end_write_section|>"
-BEGIN_EDIT_ARTICLE = "<|begin_edit_article|>"
-END_EDIT_ARTICLE = "<|end_edit_article|>"
-BEGIN_CHECK_ARTICLE = "<|begin_check_article|>"
-END_CHECK_ARTICLE = "<|end_check_article|>"
+BEGIN_WRITE_SECTION: str = "<|begin_write_section|>"
+END_WRITE_SECTION: str = "<|end_write_section|>"
+BEGIN_EDIT_ARTICLE: str = "<|begin_edit_article|>"
+END_EDIT_ARTICLE: str = "<|end_edit_article|>"
+BEGIN_CHECK_ARTICLE: str = "<|begin_check_article|>"
+END_CHECK_ARTICLE: str = "<|end_check_article|>"
 
 
-error_indicators = [
+error_indicators: list[str] = [
     'limit exceeded',
     'Error fetching',
     'Account balance not enough',
@@ -98,12 +88,10 @@ def parse_args():
 
     parser.add_argument('--temperature', type=float, default=0.7, help="Sampling temperature.")
     parser.add_argument('--top_p', type=float, default=0.8, help="Top-p sampling parameter.")
-    parser.add_argument('--min_p', type=float, default=0.05, help="Minimum p sampling parameter.")
     parser.add_argument('--top_k_sampling', type=int, default=20, help="Top-k sampling parameter.")
     parser.add_argument('--repetition_penalty', type=float, default=1.05, help="Repetition penalty. If not set, defaults based on the model.")
     parser.add_argument('--max_tokens', type=int, default=81920, help="Maximum number of tokens to generate. If not set, defaults based on the model and dataset.")
 
-    # parser.add_argument('--max_search_limit', type=int, default=10, help="Maximum number of searches per question.")
     parser.add_argument('--top_k', type=int, default=10, help="Maximum number of search documents to return.")
     parser.add_argument('--keep_links', action='store_true', default=False, help="Whether to keep links in fetched web content")
     parser.add_argument('--use_jina', action='store_true', help="Whether to use Jina API for document fetching.")
@@ -127,24 +115,24 @@ def parse_args():
 
 # Initialize tokenizers
 args = parse_args()
-tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
-aux_tokenizer = AutoTokenizer.from_pretrained(args.aux_tokenizer_path)
+tokenizer: AutoTokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
+aux_tokenizer: AutoTokenizer = AutoTokenizer.from_pretrained(args.aux_tokenizer_path)
 
 
 def extract_between(text, start_marker, end_marker):
     """Extracts text between two markers in a string."""
     # print('Calling extract_between:', start_marker, end_marker)
-    
+
     pattern = re.escape(end_marker[::-1]) + r"(.*?)" + re.escape(start_marker[::-1])
     matches = re.findall(pattern, text[::-1], flags=re.DOTALL)
-    
+
     if matches:
         # print('Extracted text:', matches[0][::-1].strip())
         return matches[0][::-1].strip()
     print('No matches found')
     return None
 
-def format_search_results(relevant_info: List[Dict]) -> str:
+def format_search_results(relevant_info: list[dict]) -> str:
     """Format search results into a readable string"""
     formatted_documents = ""
     for i, doc_info in enumerate(relevant_info):
@@ -179,24 +167,22 @@ async def generate_response(
     max_tokens: int = 32768,
     repetition_penalty: float = 1.0,
     top_k: int = 1,
-    min_p: float = 0.0,
     model_name: str = "QwQ-32B",
-    stop: List[str] = [END_SEARCH_QUERY],
+    stop: list[str] = [END_SEARCH_QUERY],
     retry_limit: int = 3,
-    bad_words: List[str] = [f"{END_SEARCH_RESULT}\n\n{tokenizer.eos_token}"],
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """Generate a single response with retry logic"""
     for attempt in range(retry_limit):
         try:
             async with semaphore:
                 if generate_mode == "chat":
-                    messages = [{"role": "user", "content": prompt}]
+                    messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
                     if 'qwq' in model_name.lower() or 'deepseek' in model_name.lower() or 'r1' in model_name.lower():
-                        formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                        formatted_prompt: str = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
                     else:
-                        formatted_prompt = aux_tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                        formatted_prompt: str = aux_tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
                 else:
-                    formatted_prompt = prompt
+                    formatted_prompt: str = prompt
 
                 response = await client.completions.create(
                     model=model_name,
@@ -209,7 +195,6 @@ async def generate_response(
                         'top_k': top_k,
                         'include_stop_str_in_output': True,
                         'repetition_penalty': repetition_penalty,
-                        # 'min_p': min_p
                     },
                     timeout=600,
                 )
@@ -232,10 +217,10 @@ async def generate_deep_web_explorer(
     document: str,
     search_intent: str,
     args: argparse.Namespace,
-    search_cache: Dict,
-    url_cache: Dict,
+    search_cache: dict,
+    url_cache: dict,
     semaphore: asyncio.Semaphore,
-) -> Tuple[str, List[Dict], str]:
+) -> tuple[str, list[dict], str]:
     """
     Generate deep web exploration with multiple search and click operations
     Returns the output, list of interaction records, and initial prompt
@@ -265,15 +250,13 @@ async def generate_deep_web_explorer(
             max_tokens=args.max_tokens,
             repetition_penalty=args.repetition_penalty,
             top_k=args.top_k_sampling,
-            min_p=args.min_p,
             stop=[END_SEARCH_QUERY, END_CLICK_LINK],
-            bad_words=[f"{END_SEARCH_RESULT}\n\n{tokenizer.eos_token}"],
         )
 
         if first_generation:
             original_prompt = formatted_prompt
             prompt = formatted_prompt
-        
+
         output += response.replace('</think>\n','')
         total_tokens = len(prompt.split()) + len(response.split())
         first_generation = False
@@ -298,7 +281,7 @@ async def generate_deep_web_explorer(
                     continue
 
                 executed_search_queries.add(new_query)  # Add query to executed set
-                
+
                 # Execute search
                 if new_query in search_cache:
                     results = search_cache[new_query]
@@ -324,13 +307,13 @@ async def generate_deep_web_explorer(
                     relevant_info = []
 
                 formatted_documents = format_search_results(relevant_info)
-                
+
                 # Append search results
                 search_result = f"\n{BEGIN_SEARCH_RESULT}\n{formatted_documents}\n{END_SEARCH_RESULT}\n"
                 output += search_result
                 prompt += output
                 total_tokens += len(search_result.split())
-                
+
         # Check for click link
         elif response.rstrip().endswith(END_CLICK_LINK):
             url = extract_between(response, BEGIN_CLICK_LINK, END_CLICK_LINK)
@@ -345,7 +328,6 @@ async def generate_deep_web_explorer(
                 prompt=get_click_intent_instruction(question, output),
                 semaphore=semaphore,
                 max_tokens=args.max_tokens // 2,
-                bad_words=[f"{END_CLICK_RESULT}\n\n{tokenizer.eos_token}"],
             )
 
             if url and click_intent:
@@ -363,9 +345,9 @@ async def generate_deep_web_explorer(
                 if url not in url_cache:
                     try:
                         content = await fetch_page_content_async(
-                            [url], 
-                            use_jina=args.use_jina, 
-                            jina_api_key=args.jina_api_key, 
+                            [url],
+                            use_jina=args.use_jina,
+                            jina_api_key=args.jina_api_key,
                             keep_links=args.keep_links
                         )
                         content = content[url]
@@ -381,7 +363,7 @@ async def generate_deep_web_explorer(
 
                 # Check if content has error indicators
                 has_error = any(indicator.lower() in content.lower() for indicator in error_indicators) or content == ''
-                
+
                 if has_error:
                     # If content has error, use it directly as summary
                     summary = "Unable to fetch the page content. You can try other links."
@@ -394,7 +376,6 @@ async def generate_deep_web_explorer(
                         semaphore=semaphore,
                         max_tokens=8000,
                         model_name=args.aux_model_name,
-                        bad_words=[f"{END_CLICK_RESULT}\n\n{tokenizer.eos_token}"],
                     )
 
                 # Append click results
@@ -402,7 +383,7 @@ async def generate_deep_web_explorer(
                 output += click_result
                 prompt += output
                 total_tokens += len(click_result.split())
-        
+
         else:
             finished = True
             break
@@ -422,8 +403,6 @@ async def generate_deep_web_explorer(
             max_tokens=512,
             repetition_penalty=1.2,
             top_k=args.top_k_sampling,
-            min_p=args.min_p,
-            bad_words=[f"{END_CLICK_RESULT}\n\n{tokenizer.eos_token}"],
         )
         output += final_response
 
@@ -431,53 +410,51 @@ async def generate_deep_web_explorer(
 
 
 async def process_single_sequence(
-    seq: Dict,
+    seq: dict,
     client: AsyncOpenAI,
     aux_client: AsyncOpenAI,
     semaphore: asyncio.Semaphore,
     args: argparse.Namespace,
-    search_cache: Dict,
-    url_cache: Dict,
-    batch_output_records: List[Dict],
-) -> Dict:
+    search_cache: dict,
+    url_cache: dict,
+) -> dict:
     """Process a single sequence through its entire reasoning chain with MAX_TOKENS limit"""
-    
+
     # Initialize limits
-    MAX_TOKENS = 50000
-    MAX_INTERACTIONS = 80  # Maximum number of total interactions，应对复读
-    total_interactions = 0  # Track total interactions
+    MAX_TOKENS: int = 50000
+    MAX_INTERACTIONS: int = 80  # Maximum number of total interactions，应对复读
+    total_interactions: int = 0  # Track total interactions
 
     # Generate search plan first
     print(f"Generating search plan...")
-    question = seq['item']['Question']
+    question: str = seq['item']['Question']
     _, search_plan = await generate_response(
         client=aux_client,
         model_name=args.aux_model_name,
         prompt=get_search_plan_instruction(question),
         semaphore=semaphore,
         max_tokens=args.max_tokens // 2,
-        bad_words=[f"{END_SEARCH_QUERY}{tokenizer.eos_token}"],
     )
 
     print(f"---Search plan:---\n{search_plan}")
-    
+
     # Generate the full instruction with the plan
     user_prompt = get_report_webthinker_instruction(question, search_plan)
     seq['prompt'] = user_prompt
-    
+
     # Initialize token counter with prompt tokens
     total_tokens = len(seq['prompt'].split())
-    
+
     # Initialize web explorer interactions list and article-related variables
     seq['web_explorer'] = []
     article = ""
     summarized_article = ""
     document_memory = []  # Store all retrieved web page content
-    
+
     # Initialize BM25 for document retrieval
     tokenized_docs = []
     bm25 = None
-    
+
     # First response uses chat completion
     formatted_prompt, response = await generate_response(
         client=client,
@@ -489,29 +466,26 @@ async def process_single_sequence(
         max_tokens=args.max_tokens,
         repetition_penalty=args.repetition_penalty,
         top_k=args.top_k_sampling,
-        min_p=args.min_p,
         stop=[END_SEARCH_QUERY, END_WRITE_SECTION, END_EDIT_ARTICLE, BEGIN_CHECK_ARTICLE],
         generate_mode="chat"  # First generation in chat mode
     )
-    
+
     # Update token count and sequence fields
     tokens_this_response = len(response.split())
     total_tokens += tokens_this_response
-    
+
     seq['output'] += response.replace('</think>\n', '')
     seq['history'].append(response.replace('</think>\n', ''))
     seq['prompt'] = formatted_prompt + response.replace('</think>\n', '')
     seq['original_prompt'] = formatted_prompt
-    
-    bad_words = [f"{END_SEARCH_RESULT}\n\n{tokenizer.eos_token}", f"{END_SEARCH_QUERY}{tokenizer.eos_token}"],
-    
+
     while not seq['finished']:
         # Check interaction limit
         if total_interactions >= MAX_INTERACTIONS:
             print("Reached maximum interaction limit")
             seq['finished'] = True
             break
-            
+
         # Handle different response endings
         if response.rstrip().endswith(END_WRITE_SECTION):
             total_interactions += 1  # Count section writing as an interaction
@@ -524,12 +498,12 @@ async def process_single_sequence(
                     section_name, task = section_parts
                     print(f"---Section name:---\n{section_name}")
                     print(f"---Task:---\n{task}")
-                    
+
                     # Prepare relevant documents using BM25
                     if not bm25 and document_memory:
                         tokenized_docs = [word_tokenize(doc.lower()) for doc in document_memory]
                         bm25 = BM25Okapi(tokenized_docs)
-                    
+
                     if bm25:
                         query = f"{section_name} {task}"
                         tokenized_query = word_tokenize(query.lower())
@@ -540,7 +514,7 @@ async def process_single_sequence(
                             relevant_documents += f"Document {i}:\n{document_memory[idx]}\n\n"
                     else:
                         relevant_documents = ""
-                        
+
                     # Generate section content
                     section_prompt = get_write_section_instruction(
                         question=question,
@@ -550,21 +524,20 @@ async def process_single_sequence(
                         task=task,
                         current_article=summarized_article
                     )
-                    
+
                     _, section_content = await generate_response(
                         client=aux_client,
                         prompt=section_prompt,
                         semaphore=semaphore,
                         model_name=args.aux_model_name,
                         max_tokens=args.max_tokens // 4,
-                        bad_words=[f"{END_WRITE_SECTION}{tokenizer.eos_token}"],
                     )
-                    
+
                     # Update article
                     section_content = section_content.replace('## Section Name: ', '## ').split('### Conclusion')[0].split('### 结论')[0].strip('\n').strip()
                     section_content = re.sub(r'## Section \d+:', '##', section_content)
                     article += f"\n{section_content}\n\n"
-                    
+
                     """# Generate section summary
                     summary_prompt = get_section_summary_instruction(section_content)
                     _, section_summary = await generate_response(
@@ -574,7 +547,7 @@ async def process_single_sequence(
                         model_name=args.aux_model_name,
                         max_tokens=args.max_tokens // 2,
                     )
-                    
+
                     summarized_article += f"\n{section_summary}\n\n"""
 
                     # Extract outline by finding all headers
@@ -600,7 +573,6 @@ async def process_single_sequence(
                     semaphore=semaphore,
                     model_name=args.aux_model_name,
                     max_tokens=args.max_tokens // 3,
-                    bad_words=[f"{END_EDIT_ARTICLE}{tokenizer.eos_token}"],
                 )
                 # article = extract_modified_content(article, edit_response)
                 article = extract_markdown_content(edit_response)
@@ -619,7 +591,7 @@ async def process_single_sequence(
                         f"{BEGIN_CHECK_ARTICLE}{old_check}{END_CHECK_ARTICLE}",
                         f"{BEGIN_CHECK_ARTICLE}folded{END_CHECK_ARTICLE}"
                     )
-            
+
             # Check and add title if needed
             if not article.strip('\n').strip().startswith("# "):
                 title_prompt = get_title_instruction(question, article)
@@ -629,12 +601,11 @@ async def process_single_sequence(
                     semaphore=semaphore,
                     model_name=args.aux_model_name,
                     max_tokens=args.max_tokens // 4,
-                    bad_words=[f"{END_CHECK_ARTICLE}{tokenizer.eos_token}"],
                 )
                 title = title.replace('\n', '').strip('"').strip("'").strip()
                 article = f"# {title}\n\n{article}"
                 summarized_article = f"# {title}\n\n{summarized_article}"
-            
+
             # Append summarized article to prompt
             append_text = f"{summarized_article}{END_CHECK_ARTICLE}\n\n"
             seq['prompt'] += append_text
@@ -649,7 +620,7 @@ async def process_single_sequence(
             total_interactions += 1  # Count search query as an interaction
             # Handle search query operation (existing logic)
             search_query = extract_between(response, BEGIN_SEARCH_QUERY, END_SEARCH_QUERY)
-            
+
             if search_query is None or len(search_query) <= 5: # 太短了，不合法的query
                 continue
             if search_query in ['search_query', 'search query', 'your query', 'my query', 'your query here']:
@@ -671,7 +642,6 @@ async def process_single_sequence(
                 prompt=get_search_intent_instruction(question, seq['output']),
                 semaphore=semaphore,
                 max_tokens=args.max_tokens // 2,
-                bad_words=[f"{END_SEARCH_QUERY}{tokenizer.eos_token}"],
             )
 
             # 执行搜索和后续操作（同原逻辑）
@@ -708,9 +678,9 @@ async def process_single_sequence(
             if urls_to_fetch:
                 try:
                     contents = await fetch_page_content_async(
-                        urls_to_fetch, 
-                        use_jina=args.use_jina, 
-                        jina_api_key=args.jina_api_key, 
+                        urls_to_fetch,
+                        use_jina=args.use_jina,
+                        jina_api_key=args.jina_api_key,
                         keep_links=args.keep_links
                     )
                     for url, content in contents.items():
@@ -742,7 +712,7 @@ async def process_single_sequence(
 
                 # Check if content has error indicators
                 has_error = any(indicator.lower() in raw_content.lower() for indicator in error_indicators) or raw_content == ""
-            
+
                 if has_error:
                     # If content has error, use it directly as summary
                     doc_info['page_info'] = "Can not fetch the page content."
@@ -756,7 +726,6 @@ async def process_single_sequence(
                             semaphore=semaphore,
                             max_tokens=8000,
                             model_name=args.aux_model_name,
-                            bad_words=[f"{END_SEARCH_RESULT}\n\n{tokenizer.eos_token}"],
                         )
                         doc_info['page_info'] = page_info
                     else:
@@ -787,13 +756,13 @@ async def process_single_sequence(
                 "Output": analysis,
                 "Extracted_info": extracted_info
             })
-            
+
             # Update sequence with search results
             append_text = f"\n\n{BEGIN_SEARCH_RESULT}{extracted_info}{END_SEARCH_RESULT}\n\n"
             seq['prompt'] += append_text
             seq['output'] += append_text
             seq['history'].append(append_text)
-                
+
             seq['search_count'] += 1
             seq['executed_search_queries'].add(search_query)
             total_tokens += len(append_text.split())
@@ -804,12 +773,12 @@ async def process_single_sequence(
                 if 'page_info' in doc_info and doc_info['page_info'] != "Can not fetch the page content.":
                     document_memory.append(doc_info['page_info'])
                     document_memory_updated = True
-            
+
             # Rebuild BM25 index if document memory was updated
             if document_memory_updated:
                 tokenized_docs = [word_tokenize(doc.lower()) for doc in document_memory]
                 bm25 = BM25Okapi(tokenized_docs)
-            
+
             print(f"---Returned search results:---\n{extracted_info}\n")
 
         else:
@@ -835,14 +804,13 @@ async def process_single_sequence(
                 max_tokens=args.max_tokens,
                 repetition_penalty=args.repetition_penalty,
                 top_k=args.top_k_sampling,
-                min_p=args.min_p,
                 stop=[END_SEARCH_QUERY, END_WRITE_SECTION, END_EDIT_ARTICLE, BEGIN_CHECK_ARTICLE],
                 generate_mode="completion"  # Subsequent generations in completion mode
             )
 
             # Update token count and sequence fields
             total_tokens += len(response.split())
-                
+
             seq['output'] += response.replace('</think>\n', '')
             seq['history'].append(response.replace('</think>\n', ''))
             seq['prompt'] += response.replace('</think>\n', '')
@@ -857,7 +825,6 @@ async def process_single_sequence(
             semaphore=semaphore,
             model_name=args.aux_model_name,
             max_tokens=args.max_tokens, # Use a larger token limit for the final report
-            bad_words=[f"{END_EDIT_ARTICLE}{tokenizer.eos_token}"], # Adjust bad_words if necessary
         )
         refined_article = extract_markdown_content(final_report_response)
         if refined_article.strip(): # Ensure refined article is not empty
@@ -875,8 +842,8 @@ async def process_single_sequence(
 async def load_lora_adapter(api_base_url: str, lora_name: str, lora_path: str) -> bool:
     """Load a LoRA adapter with the specified name and path"""
     try:
-        lora_load_url = f"{api_base_url}/load_lora_adapter"
-        lora_payload = {
+        lora_load_url: str = f"{api_base_url}/load_lora_adapter"
+        lora_payload: dict[str, str] = {
             "lora_name": lora_name,
             "lora_path": lora_path
         }
@@ -901,7 +868,6 @@ async def unload_lora_adapter(api_base_url: str, lora_name: str) -> bool:
 
 
 async def main_async():
-    # args = parse_args()
 
     # Set random seed
     if args.seed is None:
@@ -920,50 +886,45 @@ async def main_async():
         print(f"Error: Invalid search engine '{args.search_engine}'. Choose 'bing' or 'serper'.")
         return
 
-    if args.jina_api_key == 'None':
-        jina_api_key = None
-
     # Modified data loading section
     if args.single_question:
         # Create a single item in the same format as dataset items
-        filtered_data = [{
+        filtered_data: list[dict[str, str]] = [{
             'Question': args.single_question,
         }]
         args.dataset_name = 'custom'  # Set dataset name to custom for single questions
     else:
         # Original dataset loading logic
         if args.dataset_name == 'glaive':
-            data_path = f'./data/Glaive/{args.split}.json'
-        elif args.dataset_name == 'surveyeval':
-            data_path = f'./data/SurveyEval/{args.split}.json'
+            data_path: str = f'./data/Glaive/{args.split}.json'
         else:
-            data_path = f'./data/{args.dataset_name}.json'
+            data_path: str = f'./data/{args.dataset_name}.json'
 
         print('-----------------------')
         print(f'Using {args.dataset_name} {args.split} set.')
         print('-----------------------')
 
         with open(data_path, 'r', encoding='utf-8') as json_file:
-            filtered_data = json.load(json_file)
+            filtered_data: list[dict[str, str]] = json.load(json_file)
 
         if args.subset_num != -1:
-            indices = list(range(len(filtered_data)))
-            selected_indices = random.sample(indices, min(args.subset_num, len(indices)))
-            filtered_data = [filtered_data[i] for i in selected_indices]
+            indices: list[int] = list(range(len(filtered_data)))
+            selected_indices: list[int] = random.sample(indices, min(args.subset_num, len(indices)))
+            filtered_data: list[dict[str, str]] = [filtered_data[i] for i in selected_indices]
 
     # ---------------------- Caching Mechanism ----------------------
-    cache_dir = './cache'
-    search_cache_path = os.path.join(cache_dir, f'{args.search_engine}_search_cache.json')
+    cache_dir: str = './cache'
+    search_cache_path: str = os.path.join(cache_dir, f'{args.search_engine}_search_cache.json')
     if args.keep_links:
-        url_cache_path = os.path.join(cache_dir, 'url_cache_with_links.json')
+        url_cache_path: str = os.path.join(cache_dir, 'url_cache_with_links.json')
     else:
-        url_cache_path = os.path.join(cache_dir, 'url_cache.json')
+        url_cache_path: str = os.path.join(cache_dir, 'url_cache.json')
 
     os.makedirs(cache_dir, exist_ok=True)
 
     # Load existing caches
-    search_cache = json.load(open(search_cache_path)) if os.path.exists(search_cache_path) else {}
-    url_cache = json.load(open(url_cache_path)) if os.path.exists(url_cache_path) else {}
+    search_cache: dict = json.load(open(search_cache_path)) if os.path.exists(search_cache_path) else {}
+    url_cache: dict = json.load(open(url_cache_path)) if os.path.exists(url_cache_path) else {}
 
     def save_caches():
         with open(search_cache_path, 'w', encoding='utf-8') as f:
@@ -973,43 +934,43 @@ async def main_async():
 
     # Define output directory
     if 'qwq' in args.model_name.lower():
-        model_short_name = 'qwq'
+        model_short_name: str = 'qwq'
         if 'webthinker' in args.model_name.lower():
-            model_short_name = f'webthinker{args.model_name.split("webthinker")[-1]}'
+            model_short_name: str = f'webthinker{args.model_name.split("webthinker")[-1]}'
     elif 'deepseek' in args.model_name.lower():
         if 'llama-8b' in args.model_name.lower():
-            model_short_name = 'dpsk-llama-8b'
+            model_short_name: str = 'dpsk-llama-8b'
         elif 'llama-70b' in args.model_name.lower():
-            model_short_name = 'dpsk-llama-70b'
+            model_short_name: str = 'dpsk-llama-70b'
         elif 'qwen-1.5b' in args.model_name.lower():
-            model_short_name = 'dpsk-qwen-1.5b'
+            model_short_name: str = 'dpsk-qwen-1.5b'
         elif 'qwen-7b' in args.model_name.lower():
-            model_short_name = 'dpsk-qwen-7b'
+            model_short_name: str = 'dpsk-qwen-7b'
         elif 'qwen-14b' in args.model_name.lower():
-            model_short_name = 'dpsk-qwen-14b'
+            model_short_name: str = 'dpsk-qwen-14b'
         elif 'qwen-32b' in args.model_name.lower():
-            model_short_name = 'dpsk-qwen-32b'
+            model_short_name: str = 'dpsk-qwen-32b'
         if 'webthinker' in args.model_name.lower():
-            model_short_name = f'webthinker{args.model_name.split("webthinker")[-1]}'
+            model_short_name: str = f'webthinker{args.model_name.split("webthinker")[-1]}'
     else:
-        model_short_name = args.model_name.split('/')[-1].lower().replace('-instruct', '')
+        model_short_name: str = args.model_name.split('/')[-1].lower().replace('-instruct', '')
 
-    output_dir = f'./outputs/{args.dataset_name}.{model_short_name}.webthinker'
+    output_dir: str = f'./outputs/{args.dataset_name}.{model_short_name}.webthinker'
     os.makedirs(output_dir, exist_ok=True)
 
     # Initialize the OpenAI client
-    client = AsyncOpenAI(
+    client: AsyncOpenAI = AsyncOpenAI(
         api_key="empty",
         base_url=args.api_base_url,
     )
     # Initialize auxiliary client
-    aux_client = AsyncOpenAI(
+    aux_client: AsyncOpenAI = AsyncOpenAI(
         api_key="empty",
         base_url=args.aux_api_base_url,
     )
-    
+
     # Prepare sequences
-    active_sequences = []
+    active_sequences: list[dict[str, int|str|bool|list|set|dict[str, str]]] = []
     for item in filtered_data:
         active_sequences.append({
             'item': item,
@@ -1022,16 +983,15 @@ async def main_async():
         })
 
     # Initialize batch output records
-    batch_output_records = []
-    start_time = time.time()
+    start_time: float = time.time()
 
     # Create semaphore for concurrent API calls
-    semaphore = asyncio.Semaphore(args.concurrent_limit)
+    semaphore: asyncio.Semaphore = asyncio.Semaphore(args.concurrent_limit)
 
     # Load LoRA adapter if specified
     if args.lora_name and args.lora_path:
         print(f"Loading LoRA adapter '{args.lora_name}' from {args.lora_path}")
-        success = await load_lora_adapter(args.api_base_url, args.lora_name, args.lora_path)
+        success: bool = await load_lora_adapter(args.api_base_url, args.lora_name, args.lora_path)
         if not success:
             print("Failed to load LoRA adapter")
             return
@@ -1040,7 +1000,7 @@ async def main_async():
 
     try:
         # Process all sequences concurrently
-        tasks = [
+        tasks: list[Coroutine] = [
             process_single_sequence(
                 seq=seq,
                 client=client,
@@ -1049,20 +1009,19 @@ async def main_async():
                 args=args,
                 search_cache=search_cache,
                 url_cache=url_cache,
-                batch_output_records=batch_output_records
             )
             for seq in active_sequences
         ]
 
         # Run all sequences concurrently with progress bar
         with tqdm(total=len(tasks)) as pbar:
-            async def track_progress(task):
+            async def track_progress(task: Coroutine) -> Any:
                 result = await task
                 pbar.update(1)
                 return result
-            
-            tracked_tasks = [track_progress(task) for task in tasks]
-            completed_sequences = await asyncio.gather(*tracked_tasks)
+
+            tracked_tasks: list[Coroutine] = [track_progress(task) for task in tasks]
+            completed_sequences: list = await asyncio.gather(*tracked_tasks)
 
         t = time.localtime()
         random_num = str(random.randint(0, 99)).zfill(2)
@@ -1073,10 +1032,10 @@ async def main_async():
         for i, seq in enumerate(completed_sequences):
             if seq['article'].strip():  # Only save if article is not empty
                 markdown_filename = f'article_{i+1}.md'
-                
+
                 # Add question as context at the top of the file
                 question_context = f"Question: {seq['item']['Question']}\n\n"
-                
+
                 with open(os.path.join(markdown_dir, markdown_filename), 'w', encoding='utf-8') as f:
                     f.write(question_context + seq['article'])
 
@@ -1091,7 +1050,7 @@ async def main_async():
 
     # Prepare output list and save results
     output_list = [seq['output'] for seq in completed_sequences]
-    
+
     if args.eval:
         run_evaluation(filtered_data, [seq['prompt'] for seq in completed_sequences], output_list, args.dataset_name, output_dir, total_time, args.split)
     else:
@@ -1101,7 +1060,7 @@ async def main_async():
             item['prompt'] = seq['original_prompt']
             item['Output'] = seq['output']
             item['WebExplorer'] = seq['web_explorer']  # Updated field name
-            
+
         with open(os.path.join(output_dir, result_json_name), mode='w', encoding='utf-8') as json_file:
             json.dump(filtered_data, json_file, indent=4, ensure_ascii=False)
 
