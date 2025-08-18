@@ -9,39 +9,29 @@
 
 **WebThinker** is a deep research framework fully powered by large reasoning models (LRMs). WebThinker enables LRMs to **autonomously search**, **deeply explore web pages**, and **draft research reports**, all within their thinking process.
 
-Unlike existing open-source deep search agents that typically employ retrieval-augmented generation (RAG) with predefined workflows, WebThinker allows the reasoning model itself to perform actions during thinking, achieving **end-to-end task execution** in a single generation.
-
 ### 📊 Overall Performance
 
 <p align="center">
   <img src="figures/performance.png" width="100%" />
 </p>
 
-As shown above, WebThinker consistently outperforms competing approaches on both knowledge-intensive complex reasoning benchmarks (GPQA, GAIA, WebWalkerQA, HLE) and open-ended reasoning tasks for report generation. Our WebThinker-32B with QwQ-32B as backbone reasoning model achieves superior performance across all tasks.
-
 ### ✨ The WebThinker Framework
 
 ![Model Comparison](figures/framework.png)
 
-**WebThinker** enables reasoning models to autonomously conduct web searches and web page navigations to acquire external knowledge during their reasoning process. This approach significantly reduces the time and costs associated with information gathering for researchers in knowledge-intensive fields. Furthermore, WebThinker allows LRMs to draft section content while thinking and searching, producing comprehensive, customized reports that directly address users' research questions.
-
 **Key Features:**
 - We introduce a **Deep Web Explorer** that empowers LRMs to search, navigate pages by clicking interactive elements (like links or buttons), and extract relevant information. Based on initial search results, the LRM can initiate follow-up searches and traverse deeper links until it collects all relevant information.
 - For scientific reporting, our **Autonomous Think-Search-and-Draft** strategy integrates real-time knowledge seeking with report creation. We equip LRMs with three specialized tools: (1) drafting content for specific chapters, (2) checking the current report, and (3) editing the report—ensuring reports remain comprehensive, coherent, and adaptive to new insights.
-- We're developing **RL-based training strategies** to optimize end-to-end task performance by leveraging large-scale reasoning trajectories from complex tasks. Using accuracy of reasoning, tool usage, and final outputs, we construct preference pairs for online DPO training, enabling the model to progressively improve its research capabilities.
-
-
 
 ## 🔧 Installation
 
 ###  Environment Setup
 ```bash
 # Create conda environment
-conda create -n webthinker python=3.9
+conda create -n webthinker python=3.11
 conda activate webthinker
 
 # Install requirements
-cd WebThinker-main
 pip install -r requirements.txt
 ```
 
@@ -50,12 +40,10 @@ pip install -r requirements.txt
 ### Pre-preparation
 
 #### Model Serving
-Before running WebThinker, ensure your reasoning model and auxiliary model are served using vLLM. In our experiments, we use QwQ-32B as the reasoning model and Qwen-32B-Instruct as the auxiliary model. You can also explore other instruction-tuned models as your auxiliary model, which will be used in webpage reading, report writting/editting, evaluation, etc. For detailed instructions on model serving, see [here](https://docs.vllm.ai/en/stable/serving/distributed_serving.html). 
+Before running WebThinker, ensure your reasoning model and auxiliary model are served using vLLM. In our experiments, we use QwQ-32B as the reasoning model and Qwen-32B-Instruct as the auxiliary model. You can also explore other instruction-tuned models as your auxiliary model, which will be used in webpage reading, report writting/editting, evaluation, etc. For detailed instructions on model serving, see [here](https://docs.vllm.ai/en/stable/serving/distributed_serving.html).
 
 #### Web Parser Client
 For better web crawling performance, we recommend setting up a web parser client in `scripts/search/bing_search.py` using [Crawl4AI](https://github.com/unclecode/crawl4ai). This will help handle JavaScript-rendered content and provide more reliable webpage extraction.
-
-Now you can run different inference modes using the provided scripts. Below are examples of how to execute each mode:
 
 ### Problem Solving Mode
 
@@ -138,7 +126,6 @@ python scripts/run_web_thinker_report.py \
 
 ### Run Demo
 
-You can run the demo we have created with the following command, and we will conduct in-depth exploration and thinking based on the questions you input.
 ```bash
 cd demo
 streamlit run_demo.py
@@ -149,7 +136,7 @@ streamlit run_demo.py
 ### Benchmarks
 
 The benchmarks we utilize are categorized into two types:
-- **Complex Reasoning Benchmarks:** 
+- **Complex Reasoning Benchmarks:**
     - **PhD-level Science QA:** [GPQA](https://arxiv.org/abs/2311.12022) (198 questions)
     - **General AI Assistant:** [GAIA](https://arxiv.org/abs/2311.12983) (103 questions)
     - **Web Exploration:** [WebWalkerQA](https://arxiv.org/abs/2501.07572) (680 questions)
@@ -162,7 +149,7 @@ All the pre-processed data is available in the `./data/` directory. For GAIA, HL
 
 ### Evaluation
 
-Our model inference scripts will automatically save the model's input and output texts for evaluation. 
+Our model inference scripts will automatically save the model's input and output texts for evaluation.
 
 #### Problem Solving Evaluation
 
@@ -179,7 +166,7 @@ python scripts/evaluate/evaluate.py \
 ```
 **Parameters Explanation:**
 - `--output_path`: Path to the model's outputs for evaluation.
-- `--task`: Task name. You can always set it to math (suitable for any QA task), unless it is a code task, then set it to code. 
+- `--task`: Task name. You can always set it to math (suitable for any QA task), unless it is a code task, then set it to code.
 - `--use_llm`: Whether to use the LLM to evaluate the model's performance.
 - `--api_base_url`: Base URL for the LLM API.
 - `--model_name`: Model name for LLM evaluation.
@@ -203,6 +190,6 @@ python scripts/evaluate/evaluate_report.py \
 - `--model-to-test-dir`: Path to the directory where the generated reports (markdown files) from your model are stored.
 
 
-📊 **Report Comparison Available**: 
+📊 **Report Comparison Available**:
 
 We've included the complete set of 30 test reports generated by **WebThinker**, **Grok3 DeeperSearch** and **Gemini2.0 Deep Research** in the `./outputs/` directory for your reference and comparison.
