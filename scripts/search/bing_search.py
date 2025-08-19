@@ -19,6 +19,7 @@ import aiohttp
 import asyncio
 import chardet
 import random
+from urllib.parse import urlparse
 
 
 # ----------------------- Set your WebParserClient URL -----------------------
@@ -60,23 +61,23 @@ class WebParserClient:
     def __init__(self, base_url: str = "http://localhost:8000"):
         """
         初始化Web解析器客户端
-        
+
         Args:
             base_url: API服务器的基础URL，默认为本地测试服务器
         """
         self.base_url = base_url.rstrip('/')
-        
+
     def parse_urls(self, urls: List[str], timeout: int = 120) -> List[Dict[str, Union[str, bool]]]:
         """
         发送URL列表到解析服务器并获取解析结果
-        
+
         Args:
             urls: 需要解析的URL列表
             timeout: 请求超时时间，默认20秒
-            
+
         Returns:
             解析结果列表
-            
+
         Raises:
             requests.exceptions.RequestException: 当API请求失败时
             requests.exceptions.Timeout: 当请求超时时
@@ -84,7 +85,7 @@ class WebParserClient:
         endpoint = urljoin(self.base_url, "/parse_urls")
         response = requests.post(endpoint, json={"urls": urls}, timeout=timeout)
         response.raise_for_status()  # 如果响应状态码不是200，抛出异常
-        
+
         return response.json()["results"]
 
 
@@ -181,12 +182,12 @@ def extract_text_from_url(url, use_jina=False, jina_api_key=None, snippet: Optio
             try:
                 response = session.get(url, timeout=30)
                 response.raise_for_status()
-                
+
                 # 添加编码检测和处理
                 if response.encoding.lower() == 'iso-8859-1':
                     # 尝试从内容检测正确的编码
                     response.encoding = response.apparent_encoding
-                
+
                 try:
                     soup = BeautifulSoup(response.text, 'lxml')
                 except Exception:
@@ -295,7 +296,7 @@ def fetch_page_content(urls, max_workers=32, use_jina=False, jina_api_key=None, 
         completed_futures = concurrent.futures.as_completed(futures)
         if show_progress:
             completed_futures = tqdm(completed_futures, desc="Fetching URLs", total=len(urls))
-            
+
         for future in completed_futures:
             url = futures[future]
             try:
@@ -356,7 +357,7 @@ def bing_web_search(query, subscription_key, endpoint, market='en-US', language=
                 return {}
             print(f"Bing Web Search Request Error occurred, retrying ({retry_count}/{max_retries})...")
         time.sleep(1)  # Wait 1 second between retries
-    
+
     return {}  # Should never reach here but added for completeness
 
 
@@ -374,7 +375,7 @@ def extract_pdf_text(url):
         response = session.get(url, timeout=20)  # Set timeout to 20 seconds
         if response.status_code != 200:
             return f"Error: Unable to retrieve the PDF (status code {response.status_code})"
-        
+
         # Open the PDF file using pdfplumber
         with pdfplumber.open(BytesIO(response.content)) as pdf:
             full_text = ""
@@ -382,7 +383,7 @@ def extract_pdf_text(url):
                 text = page.extract_text()
                 if text:
                     full_text += text
-        
+
         # Limit the text length
         cleaned_text = full_text
         return cleaned_text
@@ -402,7 +403,7 @@ def extract_relevant_info(search_results):
         list: A list of dictionaries containing the extracted information.
     """
     useful_info = []
-    
+
     if 'webPages' in search_results and 'value' in search_results['webPages']:
         for id, result in enumerate(search_results['webPages']['value']):
             info = {
@@ -416,7 +417,7 @@ def extract_relevant_info(search_results):
                 'context': ''  # Reserved field to be filled later
             }
             useful_info.append(info)
-    
+
     return useful_info
 
 
@@ -471,7 +472,7 @@ class RateLimiter:
     def __init__(self, rate_limit: int, time_window: int = 60):
         """
         初始化速率限制器
-        
+
         Args:
             rate_limit: 在时间窗口内允许的最大请求数
             time_window: 时间窗口大小(秒)，默认60秒
@@ -495,22 +496,22 @@ class RateLimiter:
                 self.last_update = now
                 if self.tokens <= 0:
                     await asyncio.sleep(random.randint(5, 30))  # 等待xxx秒后重试
-            
+
             self.tokens -= 1
             return True
 
 # 创建全局速率限制器实例
 jina_rate_limiter = RateLimiter(rate_limit=130)  # 每分钟xxx次，避免报错
 
-async def extract_text_from_url_async(url: str, session: aiohttp.ClientSession, use_jina: bool = False, 
-                                    jina_api_key: Optional[str] = None, snippet: Optional[str] = None, 
+async def extract_text_from_url_async(url: str, session: aiohttp.ClientSession, use_jina: bool = False,
+                                    jina_api_key: Optional[str] = None, snippet: Optional[str] = None,
                                     keep_links: bool = False) -> str:
     """Async version of extract_text_from_url"""
     try:
         if use_jina:
             # 在调用jina之前获取令牌
             await jina_rate_limiter.acquire()
-            
+
             jina_headers = {
                 'Authorization': f'Bearer {jina_api_key}',
                 'X-Return-Format': 'markdown',
@@ -540,7 +541,7 @@ async def extract_text_from_url_async(url: str, session: aiohttp.ClientSession, 
                     detected = chardet.detect(content)
                     encoding = detected['encoding'] if detected['encoding'] else 'utf-8'
                     html = content.decode(encoding, errors='replace')
-                
+
                 # 检查是否有错误指示
                 has_error = (any(indicator.lower() in html.lower() for indicator in error_indicators) and len(html.split()) < 64) or len(html) < 50 or len(html.split()) < 20
                 # has_error = len(html.split()) < 64
@@ -599,7 +600,7 @@ async def extract_text_from_url_async(url: str, session: aiohttp.ClientSession, 
     except Exception as e:
         return f"Error fetching {url}: {str(e)}"
 
-async def fetch_page_content_async(urls: List[str], use_jina: bool = False, jina_api_key: Optional[str] = None, 
+async def fetch_page_content_async(urls: List[str], use_jina: bool = False, jina_api_key: Optional[str] = None,
                                  snippets: Optional[Dict[str, str]] = None, show_progress: bool = False,
                                  keep_links: bool = False, max_concurrent: int = 32) -> Dict[str, str]:
     """Asynchronously fetch content from multiple URLs."""
@@ -610,15 +611,15 @@ async def fetch_page_content_async(urls: List[str], use_jina: bool = False, jina
             tasks = []
             for url in urls:
                 task = extract_text_from_url_async(
-                    url, 
-                    session, 
-                    use_jina, 
+                    url,
+                    session,
+                    use_jina,
                     jina_api_key,
                     snippets.get(url) if snippets else None,
                     keep_links
                 )
                 tasks.append(task)
-            
+
             if show_progress:
                 results = []
                 for task in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Fetching URLs"):
@@ -626,7 +627,7 @@ async def fetch_page_content_async(urls: List[str], use_jina: bool = False, jina
                     results.append(result)
             else:
                 results = await asyncio.gather(*tasks)
-            
+
             return {url: result for url, result in zip(urls, results)}  # 返回字典而不是协程对象
 
     return await process_urls()  # 确保等待异步操作完成
@@ -646,9 +647,9 @@ async def extract_pdf_text_async(url: str, session: aiohttp.ClientSession) -> st
         async with session.get(url, timeout=30) as response:  # Set timeout to 20 seconds
             if response.status != 200:
                 return f"Error: Unable to retrieve the PDF (status code {response.status})"
-            
+
             content = await response.read()
-            
+
             # Open the PDF file using pdfplumber
             with pdfplumber.open(BytesIO(content)) as pdf:
                 full_text = ""
@@ -656,7 +657,7 @@ async def extract_pdf_text_async(url: str, session: aiohttp.ClientSession) -> st
                     text = page.extract_text()
                     if text:
                         full_text += text
-            
+
             # Limit the text length
             cleaned_text = full_text
             return cleaned_text
@@ -683,7 +684,7 @@ def google_serper_search(query: str, api_key: str, timeout: int = 20):
         'X-API-KEY': api_key,
         'Content-Type': 'application/json'
     }
-    
+
     max_retries = 3
     retry_count = 0
 
@@ -706,10 +707,10 @@ def google_serper_search(query: str, api_key: str, timeout: int = 20):
                 return {}
             print(f"Google Serper API Request Error occurred, retrying ({retry_count}/{max_retries})...")
         time.sleep(1)  # Wait 1 second between retries
-    
+
     return {}
 
-def extract_relevant_info_serper(search_results):
+def extract_relevant_info_serper(search_results: dict) -> list[dict[str, int|str]]:
     """
     Extract relevant information from Google Serper search results.
 
@@ -719,17 +720,17 @@ def extract_relevant_info_serper(search_results):
     Returns:
         list: A list of dictionaries containing the extracted information.
     """
-    useful_info = []
+    useful_info: list[dict[str, int|str]] = []
     if 'organic' in search_results:
         for i, result in enumerate(search_results['organic']):
             # Try to extract domain for site_name, or leave empty
-            site_name = ''
+            site_name: str = ''
             try:
-                site_name = urlparse(result.get('link', '')).netloc
+                site_name: str = urlparse(result.get('link', '')).netloc
             except Exception:
                 pass
 
-            info = {
+            info: dict[str, int|str] = {
                 'id': i + 1,
                 'title': result.get('title', ''),
                 'url': result.get('link', ''),
@@ -741,7 +742,7 @@ def extract_relevant_info_serper(search_results):
             useful_info.append(info)
     return useful_info
 
-async def google_serper_search_async(query: str, api_key: str, timeout: int = 20):
+async def google_serper_search_async(query: str, api_key: str, timeout: int = 20) -> dict:
     """
     Perform an asynchronous search using the Google Serper API.
 
@@ -753,25 +754,25 @@ async def google_serper_search_async(query: str, api_key: str, timeout: int = 20
     Returns:
         dict: JSON response of the search results. Returns empty dict if all retries fail.
     """
-    url = "https://google.serper.dev/search"
-    payload = json.dumps({"q": query})
-    headers_serper = {  # Use a different name to avoid conflict with global headers
+    url: str = "https://google.serper.dev/search"
+    payload: str = json.dumps({"q": query})
+    headers_serper: dict[str, str] = {  # Use a different name to avoid conflict with global headers
         'X-API-KEY': api_key,
         'Content-Type': 'application/json'
     }
-    
-    max_retries = 5  # Consistent with bing_web_search_async
-    retry_count = 0
-    
+
+    max_retries: int = 5  # Consistent with bing_web_search_async
+    retry_count: int = 0
+
     # Create a timeout object for aiohttp
-    client_timeout = aiohttp.ClientTimeout(total=timeout)
+    client_timeout: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=timeout)
 
     async with aiohttp.ClientSession() as session:
         while retry_count < max_retries:
             try:
                 async with session.post(url, headers=headers_serper, data=payload, timeout=client_timeout) as response:
                     response.raise_for_status()  # Raise AIOHTTPError for bad status (4xx or 5xx)
-                    search_results = await response.json()
+                    search_results: dict = await response.json()
                     return search_results
             except asyncio.TimeoutError:
                 retry_count += 1
@@ -785,10 +786,10 @@ async def google_serper_search_async(query: str, api_key: str, timeout: int = 20
                     print(f"Google Serper API Request Error occurred: {e} after {max_retries} retries")
                     return {}
                 print(f"Google Serper API Request Error occurred ({e}), retrying ({retry_count}/{max_retries})...")
-            
+
             if retry_count < max_retries:
                 await asyncio.sleep(1)  # Wait 1 second between retries (non-blocking)
-    
+
     return {}
 
 # ------------------------------------------------------------
@@ -809,11 +810,11 @@ if __name__ == "__main__":
         # Set your API key for Bing Web Search API
         BING_SUBSCRIPTION_KEY = "YOUR_BING_SUBSCRIPTION_KEY"
         bing_endpoint = "https://api.bing.microsoft.com/v7.0/search"
-        
+
         # Perform the search
         print("Performing Bing Web Search...")
         search_results = bing_web_search(query, BING_SUBSCRIPTION_KEY, bing_endpoint)
-        
+
         print("Extracting relevant information from Bing search results...")
         extracted_info = extract_relevant_info(search_results)
 
@@ -830,7 +831,7 @@ if __name__ == "__main__":
     else:
         print(f"Unknown search_type: {search_type}. Please choose 'bing' or 'serper'.")
         exit()
-    
+
     if not extracted_info:
         print("No search results to process.")
         exit()

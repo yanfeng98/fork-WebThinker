@@ -1,5 +1,5 @@
 
-def get_report_webthinker_instruction(question, plan):
+def get_report_webthinker_instruction(question: str, plan: str) -> str:
     return f"""You are a research assistant with the ability to perform web searches to write a scientific research article. You have special tools:
 
 - To perform a search: write <|begin_search_query|> your query here <|end_search_query|>.
@@ -90,7 +90,7 @@ Directly output the plan, do not include any other words."""
 
 
 
-def get_deep_web_explorer_instruction(search_query, search_intent, search_result):
+def get_deep_web_explorer_instruction(search_query: str, search_intent: str, search_result: str) -> str:
     return f"""You are a web explorer analyzing search results to find relevant information based on a given search query and search intent.
 
 **Guidelines:**
@@ -129,7 +129,7 @@ Now please analyze the web pages and provide all relevant information for the se
 """
 
 
-def get_click_web_page_reader_instruction(click_intent, document):
+def get_click_web_page_reader_instruction(click_intent: str, document: str) -> str:
     return f"""Please provide all content related to the following click intent from this document in markdown format.
 
 Click Intent:
@@ -160,7 +160,7 @@ Please provide the current click intent."""
 
 
 
-def get_write_section_instruction(question, previous_thoughts, relevant_documents, section_name, task, current_article):
+def get_write_section_instruction(question: str, previous_thoughts: str, relevant_documents: str, section_name: str, task: str, current_article: str) -> str:
     return f"""You are a research paper writing assistant. Please write a complete and comprehensive "{section_name}" section based on the following information.
 
 Potential helpful documents:
@@ -199,7 +199,7 @@ def get_section_summary_instruction(section):
 """
 
 
-def get_edit_article_instruction(edit_instruction, article):
+def get_edit_article_instruction(edit_instruction: str, article: str) -> str:
     return f"""You are a professional article editor. Please help me modify the article based on the following edit instruction:
 
 Edit instruction:
@@ -247,7 +247,7 @@ Entire modified section/subsection:
 """
 
 
-def get_title_instruction(question, article):
+def get_title_instruction(question: str, article: str) -> str:
     return f"""Please generate a precise title for the following article:
 
 Original Question:
